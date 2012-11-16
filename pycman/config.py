@@ -80,54 +80,64 @@ BOOLEAN_OPTIONS = (
 
 def pacman_conf_enumerator(path):
 	filestack = []
-	current_section = None
-	filestack.append(open(path))
-	while len(filestack) > 0:
-		f = filestack[-1]
-		line = f.readline()
-		if len(line) == 0:
-			# end of file
-			filestack.pop()
-			continue
+	try:
+		current_section = None
+		filestack.append(open(path))
+		while len(filestack) > 0:
+			f = filestack[-1]
+			line = f.readline()
+			if len(line) == 0:
+				# end of file
+				filestack.pop().close()
+				continue
 
-		line = line.strip()
-		if len(line) == 0: continue
-		if line[0] == '#':
-			continue
-		if line[0] == '[' and line[-1] == ']':
-			current_section = line[1:-1]
-			continue
-		if current_section is None:
-			raise InvalidSyntax(f.name, 'statement outside of a section', line)
-		# read key, value
-		key, equal, value = [x.strip() for x in line.partition('=')]
+			line = line.strip()
+			if len(line) == 0: continue
+			if line[0] == '#':
+				continue
+			if line[0] == '[' and line[-1] == ']':
+				current_section = line[1:-1]
+				continue
+			if current_section is None:
+				raise InvalidSyntax(f.name, 'statement outside of a section', line)
+			# read key, value
+			parts = line.partition('=')
+			key, equal, value = [x.strip() for x in parts]
 
-		# include files
-		if equal == '=' and key == 'Include':
-			filestack.extend(open(f) for f in glob.glob(value))
-			continue
-		if current_section != 'options':
-			# repos only have the Server option
-			if key == 'Server' and equal == '=':
-				yield (current_section, 'Server', value)
-			elif key == 'SigLevel' and equal == '=':
-				yield (current_section, 'SigLevel', value)
+			# include files
+			if equal == '=' and key == 'Include':
+				files = glob.glob(value)
+				filestack.extend(open(f) for f in files)
+				continue
+			if current_section != 'options':
+				# repos only have the Server option
+				if key == 'Server' and equal == '=':
+					yield (current_section, 'Server',
+						value)
+				elif key == 'SigLevel' and equal == '=':
+					yield (current_section, 'SigLevel',
+						value)
+				else:
+					raise InvalidSyntax(f.name, 'invalid key for repository configuration', line)
+				continue
+			if equal == '=':
+				if key in LIST_OPTIONS:
+					for val in value.split():
+						yield (current_section, key,
+							val)
+				elif key in SINGLE_OPTIONS:
+					yield (current_section, key, value)
+				else:
+					warnings.warn(InvalidSyntax(f.name, 'unrecognized option', key))
 			else:
-				raise InvalidSyntax(f.name, 'invalid key for repository configuration', line)
-			continue
-		if equal == '=':
-			if key in LIST_OPTIONS:
-				for val in value.split():
-					yield (current_section, key, val)
-			elif key in SINGLE_OPTIONS:
-				yield (current_section, key, value)
-			else:
-				warnings.warn(InvalidSyntax(f.name, 'unrecognized option', key))
-		else:
-			if key in BOOLEAN_OPTIONS:
-				yield (current_section, key, True)
-			else:
-				warnings.warn(InvalidSyntax(f.name, 'unrecognized option', key))
+				if key in BOOLEAN_OPTIONS:
+					yield (current_section, key, True)
+				else:
+					warnings.warn(InvalidSyntax(f.name, 'unrecognized option', key))
+	
+	finally:
+		while len(filestack) > 0:
+			filestack.pop().close()
 
 _logmask = pyalpm.LOG_ERROR | pyalpm.LOG_WARNING
 
